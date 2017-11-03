@@ -1,0 +1,36 @@
+{
+    "hwc": [28, 28, 1],
+    "num_class": 10,
+    "Primary Capsule": {
+        "dim": 8,
+        "depth": 32
+    },
+    "Digit Capsule": {
+        "dim": 16,
+        "nRouting": 3
+    },
+    "recognizer": {
+        "output": [256, 256],
+        "kernel": [9, 9],
+        "stride": [1, 2]
+    },
+    "generator": {
+        "output": [512, 1024]
+    },
+    "loss": {
+        "m+": 0.9,
+        "m-": 0.1,
+        "lambda": 0.5,
+        "reconst weight": 5e-4
+    },
+    "valid": {
+        "magnitude": 0.25,
+        "spacing": 11
+    },
+    "training": {
+        "batch_size": 256,
+        "num_epoch": 100,
+        "update_freq": 500
+    },
+    "Note": "recognizer's last output must be divisible by the dim*depth of the primay capsule."
+}
