@@ -104,7 +104,9 @@ class MultiMNIST(object):
                 data = tf.parse_single_example(data, features)
 
                 x = tf.image.decode_png(data['image'])
+                x = char2tanh(tf.to_float(x))
                 x = tf.reshape(x, [36, 36, 1])  # `batch` doesn't accept Tensor with none shape 
+                
                 y = data['label']
 
                 if data_format == 'channels_first':

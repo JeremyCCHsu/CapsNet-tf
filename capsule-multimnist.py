@@ -3,17 +3,17 @@ import json
 import numpy as np
 import tensorflow as tf
 
-from helper import  mnist, validate_log_dirs
+from helper import MultiMNIST, validate_log_dirs
 
 args = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_string(
-    'arch', 'architecture-capsule.json', 'network architecture')
+    'arch', 'architecture-multimnist.json', 'network architecture')
 tf.app.flags.DEFINE_string(
     'logdir_root', None, 'root of log dir')
 tf.app.flags.DEFINE_string('logdir', None, 'log dir')
 tf.app.flags.DEFINE_string(
     'restore_from', None, 'restore from dir (not from *.ckpt)')
-tf.app.flags.DEFINE_string('msg', '-Capsule', 'Additional message')
+tf.app.flags.DEFINE_string('msg', '-MultiMNIST', 'Additional message')
 
 def squash(x):
     '''
@@ -229,7 +229,7 @@ class CapsuleNet(object):
                     l, a, _ = sess.run([loss['L'], loss['acc'], opt])
                     print(
                         '\rIter {}/{}: loss = {:.4e}, acc={:.2f}%; test acc={:.2f}'.format(
-                            it, maxIter, l, a * 100., a_t * 100.),
+                            it, maxIter, l, a_t * 100., a * 100.),
                         end=''
                     )
                 else:
@@ -272,13 +272,14 @@ class CapsuleMultiMNIST(CapsuleNet):
 
         xh0 = self._G(v, y[:, 0])  # [n, h, w, c]
         xh1 = self._G(v, y[:, 1])  # [n, h, w, c]
-        xh_ = tf.concat([xh0, xh1, tf.zeros_like(xh0)], -1)
-        tf.summary.image('xh', xh_, 4)
-
-        xh = tf.concat([tf.expand_dims(xh0, -1), tf.expand_dims(xh1, -1)], -1)
-        xh = tf.reduce_max(xh, -1)
 
         with tf.name_scope('Loss'):
+            xh_ = tf.concat([xh0, xh1, tf.zeros_like(xh0)], -1)
+            tf.summary.image('xh', xh_, 4)
+
+            xh = tf.concat([tf.expand_dims(xh0, -1), tf.expand_dims(xh1, -1)], -1)
+            xh = tf.reduce_max(xh, -1)
+
             tf.summary.image('x', x, 4)
             # tf.summary.image('xh', xh, 4)
             tf.summary.image('V', tf.expand_dims(v, -1), 4)
@@ -306,26 +307,71 @@ class CapsuleMultiMNIST(CapsuleNet):
             tf.summary.scalar('loss', loss)
             loss += l_reconst
 
-            acc = tf.reduce_mean(
-                tf.cast(
-                    tf.equal(y, tf.argmax(v_norm, 1)),
-                    tf.float32
-                ))
+            # acc = tf.reduce_mean(
+            #     tf.cast(
+            #         tf.equal(y, tf.argmax(v_norm, 1)),
+            #         tf.float32
+            #     ))
+
+            acc = tf.cast(tf.nn.in_top_k(v_norm, y[:, 0], 2), tf.float32) \
+                + tf.cast(tf.nn.in_top_k(v_norm, y[:, 1], 2), tf.float32)
+            acc = tf.reduce_mean(acc) / 2.
             return {'L': loss, 'acc': acc, 'reconst': l_reconst}
+    
+    
+
+    def train(self, loss, loss_t):
+        global_step = tf.Variable(0)
+        dirs = validate_log_dirs(args)
+        dirs.update({'logdir': dirs['logdir'] + args.msg})
+
+        hparam = self.arch['training']
+        maxIter = hparam['num_epoch'] * 60000 // hparam['batch_size']
+        optimizer = tf.train.AdamOptimizer()
+        opt = optimizer.minimize(loss['L'], global_step=global_step)
+
+        sv = tf.train.Supervisor(
+            logdir=dirs['logdir'],
+            # save_summaries_secs=120,
+            global_step=global_step,
+        )
+        sess_config = tf.ConfigProto(
+            allow_soft_placement=True,
+            gpu_options=tf.GPUOptions(allow_growth=True)
+        )
+        with sv.managed_session(config=sess_config) as sess:
+            for it in range(maxIter):
+                if it % hparam['update_freq'] == 0:
+                    # a = list()
+                    # for _ in range(100):
+                    #     a_ = sess.run(loss_t['acc'])
+                    #     a.append(a_)
+                    # a_t = np.mean(a)
+
+                    l, a, _ = sess.run([loss['L'], loss['acc'], opt])
+                    print(
+                        '\rIter {}/{}: loss = {:.4e}, acc={:.2f}%;'.format(
+                            it, maxIter, l, a * 100.), #, a_t * 100.),
+                        end=''
+                    )
+                else:
+                    sess.run(opt)
+            print()
 
 
 def main():
     with open(args.arch) as fp:
         arch = json.load(fp)
-    data = mnist(
+    data = MultiMNIST(
+        './MultiMNIST_test.tfr',
         batch_size=arch['training']['batch_size'],
         data_format='channels_last'
     )
-    net = CapsuleNet(arch=arch)
+    net = CapsuleMultiMNIST(arch=arch)
     loss = net.loss(data.x, data.y)
-    net.inspect(data.example)
-    loss_t = net.loss(data.x_t, data.y_t)
-    net.train(loss, loss_t)
+    # net.inspect(data.example)
+    # loss_t = net.loss(data.x_t, data.y_t)
+    net.train(loss, loss_t=None)
 
 if __name__ == '__main__':
     main()
