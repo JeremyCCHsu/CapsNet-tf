@@ -28,7 +28,7 @@
         "spacing": 11
     },
     "training": {
-        "batch_size": 256,
+        "batch_size": 200,
         "num_epoch": 100,
         "update_freq": 500
     },

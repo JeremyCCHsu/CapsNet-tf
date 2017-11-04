@@ -3,7 +3,7 @@ import json
 import numpy as np
 import tensorflow as tf
 
-from helper import MultiMNIST, validate_log_dirs
+from helper import MultiMNISTIndexReader, validate_log_dirs
 
 args = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_string(
@@ -250,7 +250,9 @@ class CapsuleNet(object):
 #     # set_trace()
 
 class CapsuleMultiMNIST(CapsuleNet):
-    def loss(self, x, y):
+    def loss(self, x, y, xi, xj):
+        J, _, _, _ = self._get_shape_JDUV()
+
         v = self._C(x)  # [n, J=10, V=16]
         tf.summary.image('V', tf.expand_dims(v, -1), 4)
         
@@ -260,31 +262,34 @@ class CapsuleMultiMNIST(CapsuleNet):
         )
 
         with tf.name_scope('Loss'):
-            xh0, xh1 = tf.split(xh_, 2)
-            xh_ = tf.concat([xh0, xh1, - tf.ones_like(xh0)], -1)
+            xhi, xhj = tf.split(xh_, 2)
+            xh_ = tf.concat([xhi, xhj, - tf.ones_like(xhi)], -1)
             with tf.name_scope('Images'):
                 tf.summary.image('x', x, 4)
                 tf.summary.image('xhx', xh_, 4)
-                tf.summary.image('xh0', xh0, 4)
-                tf.summary.image('xh1', xh1, 4)
+                tf.summary.image('xhi', xhi, 4)
+                tf.summary.image('xhj', xhj, 4)
                 
-            xh = tf.concat([tf.expand_dims(xh0, -1), tf.expand_dims(xh1, -1)], -1)
+            xh = tf.concat([tf.expand_dims(xhi, -1), tf.expand_dims(xhj, -1)], -1)
             xh = tf.reduce_max(xh, -1)
 
             # tf.summary.image('xh', xh, 4)
 
             hparam = self.arch['loss']
 
-            l_reconst = hparam['reconst weight'] * \
-                tf.reduce_mean(tf.reduce_sum(tf.square(x - xh), [1, 2, 3]))
+            l_reconst = hparam['reconst weight'] * (
+                tf.reduce_mean(tf.reduce_sum(tf.square(xi - xhi), [1, 2, 3])) + \
+                tf.reduce_mean(tf.reduce_sum(tf.square(xj - xhj), [1, 2, 3]))
+            )
             tf.summary.scalar('l_reconst', l_reconst)
 
             v_norm = tf.norm(v, axis=-1)  # [n, J=10]
             tf.summary.histogram('v_norm', v_norm)
 
-            Y0 = tf.one_hot(y[:, 0], tf.shape(v)[1])
-            Y1 = tf.one_hot(y[:, 1], tf.shape(v)[1])
-            Y = Y0 + Y1
+            # Y0 = tf.one_hot(y[:, 0], J)
+            # Y1 = tf.one_hot(y[:, 1], J)
+            # Y = Y0 + Y1
+            Y = tf.one_hot(y[:, 0], J) + tf.one_hot(y[:, 1], J)
 
             # Y = tf.one_hot(y, tf.shape(v)[1])  # [n, J=10]
             
@@ -302,6 +307,7 @@ class CapsuleMultiMNIST(CapsuleNet):
             #         tf.float32
             #     ))
 
+            # TODO: HOW TO CALCULATE THE "ACCURACY" in MultiMNIST?
             acc = tf.cast(tf.nn.in_top_k(v_norm, y[:, 0], 2), tf.float32) \
                 + tf.cast(tf.nn.in_top_k(v_norm, y[:, 1], 2), tf.float32)
             acc = tf.reduce_mean(acc) / 2.
@@ -310,9 +316,9 @@ class CapsuleMultiMNIST(CapsuleNet):
     
 
     def train(self, loss, loss_t):
-        global_step = tf.Variable(0)
+        global_step = tf.Variable(0, name='global_step')
         dirs = validate_log_dirs(args)
-        dirs.update({'logdir': dirs['logdir'] + args.msg})
+        # dirs.update({'logdir': dirs['logdir'] + args.msg})
 
         hparam = self.arch['training']
         maxIter = hparam['num_epoch'] * 60000000 // hparam['batch_size']  # TODO
@@ -351,14 +357,14 @@ class CapsuleMultiMNIST(CapsuleNet):
 def main():
     with open(args.arch) as fp:
         arch = json.load(fp)
-    data = MultiMNIST(
-        './MultiMNIST_test.tfr',  # TODO
+    data = MultiMNISTIndexReader(
+        train_index='MultiMNIST_index_train.npf',
         batch_size=arch['training']['batch_size'],
         data_format='channels_last',
-        capacity=2**14, min_after_dequeue=2**13
+        capacity=2**12, min_after_dequeue=2**11
     )
     net = CapsuleMultiMNIST(arch=arch)
-    loss = net.loss(data.x, data.y)
+    loss = net.loss(data.x, data.y, data.xi, data.xj)
     # net.inspect(data.example)
     # loss_t = net.loss(data.x_t, data.y_t)
     net.train(loss, loss_t=None)
