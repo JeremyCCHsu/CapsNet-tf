@@ -152,6 +152,9 @@ def validate_log_dirs(args):
     if args.logdir is None:
         logdir = get_default_logdir(logdir_root)
 
+    if args.msg:
+        logdir += args.msg
+
     # Note: `logdir` and `restore_from` are exclusive
     if args.restore_from is None:
         restore_from = logdir

@@ -248,34 +248,21 @@ class CapsuleNet(object):
 #     # set_trace()
 
 class CapsuleMultiMNIST(CapsuleNet):
-    # def _generate(self, v, y):
-    #     ''' y: [n, 2] '''
-    #     J = self.arch['num_class']
-    #     V = self.arch['Digit Capsule']['dim']
-
-    #     Y = tf.one_hot(y, J) # [n, J]
-    #     Y = tf.expand_dims(Y, -1)  # [n, J, 1]
-
-    #     x = v * Y
-    #     x = tf.reshape(x, [-1, J * V])
-
-    #     net = self.arch['generator']
-    #     for o in net['output']:
-    #         x = tf.layers.dense(x, o, tf.nn.relu)
-
-    #     h, w, c = self.arch['hwc']
-    #     x = tf.layers.dense(x, h * w * c, tf.nn.tanh)
-    #     return tf.reshape(x, [-1, h, w, c])
-
     def loss(self, x, y):
         v = self._C(x)  # [n, J=10, V=16]
 
-        xh0 = self._G(v, y[:, 0])  # [n, h, w, c]
-        xh1 = self._G(v, y[:, 1])  # [n, h, w, c]
+        xh_ = self._G(
+            tf.concat([v, v], 0),
+            tf.concat([y[:, 0], y[:, 1]], 0)
+        )
 
         with tf.name_scope('Loss'):
-            xh_ = tf.concat([xh0, xh1, tf.zeros_like(xh0)], -1)
-            tf.summary.image('xh', xh_, 4)
+            xh0, xh1 = tf.split(xh_, 2)
+
+            xh_ = tf.concat([xh0, xh1, - tf.ones_like(xh0)], -1)
+            tf.summary.image('xhx', xh_, 4)
+            tf.summary.image('xh0', xh0, 4)
+            tf.summary.image('xh1', xh1, 4)
 
             xh = tf.concat([tf.expand_dims(xh0, -1), tf.expand_dims(xh1, -1)], -1)
             xh = tf.reduce_max(xh, -1)
@@ -365,7 +352,8 @@ def main():
     data = MultiMNIST(
         './MultiMNIST_test.tfr',
         batch_size=arch['training']['batch_size'],
-        data_format='channels_last'
+        data_format='channels_last',
+        capacity=2**14, min_after_dequeue=2**13
     )
     net = CapsuleMultiMNIST(arch=arch)
     loss = net.loss(data.x, data.y)
