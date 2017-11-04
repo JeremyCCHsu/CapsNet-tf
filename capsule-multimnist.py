@@ -50,14 +50,17 @@ class CapsuleNet(object):
         self._C = tf.make_template('Recognizer', self._recognize)
         self._G = tf.make_template('Generator', self._generate)
 
-    def _recognize(self, x):
-        '''
-        `x`: [b, h, w, c]
-        '''
+    def _get_shape_JDUV(self):
         J = self.arch['num_class']  # 10
         D = self.arch['Primary Capsule']['depth']  # 32
         U = self.arch['Primary Capsule']['dim']  # 8
         V = self.arch['Digit Capsule']['dim']  # 16
+        return J, D, U, V
+
+    def _recognize(self, x):
+        '''`x`: [b, h, w, c]
+        '''
+        J, D, U, V = self._get_shape_JDUV()
         net = self.arch['recognizer']
         assert D * U == net['output'][-1]
 
@@ -101,12 +104,12 @@ class CapsuleNet(object):
             C = tf.expand_dims(C, -1)    # [n, I, J, 1] (necessary for broadcasting)
 
             S = tf.reduce_sum(C * uji, 1)  # [n, J, V]
-            V_ = squash(S)                 # [n, J, V]
-            V = tf.expand_dims(V_, 1)      # [n, 1, J, V]
+            v_ = squash(S)                 # [n, J, V]
+            v = tf.expand_dims(v_, 1)      # [n, 1, J, V]
 
-            dB = tf.reduce_sum(uji * V, -1)
+            dB = tf.reduce_sum(uji * v, -1)
             B = B + dB
-            return V_, B
+            return v_, B
 
     def _generate(self, v, y):
         '''
@@ -116,8 +119,7 @@ class CapsuleNet(object):
         Return:
             `x`: Image [n, h, w, c]
         '''
-        J = self.arch['num_class']
-        V = self.arch['Digit Capsule']['dim']
+        J, _, _, V = self._get_shape_JDUV()
 
         Y = tf.one_hot(y, J) # [n, J]
         Y = tf.expand_dims(Y, -1)  # [n, J, 1]
@@ -145,6 +147,7 @@ class CapsuleNet(object):
         v = self._C(x)  # [n, J=10, V=16]
         xh = self._G(v, y)  # [n, h, w, c]
 
+        J, _, _, _ = self._get_shape_JDUV()
         with tf.name_scope('Loss'):
             tf.summary.image('x', x, 4)
             tf.summary.image('xh', xh, 4)
@@ -159,7 +162,7 @@ class CapsuleNet(object):
             v_norm = tf.norm(v, axis=-1)  # [n, J=10]
             tf.summary.histogram('v_norm', v_norm)
 
-            Y = tf.one_hot(y, tf.shape(v)[1])  # [n, J=10]
+            Y = tf.one_hot(y, J)  # [n, J=10]
             loss = Y * tf.square(tf.maximum(0., hparam['m+'] - v_norm)) \
                 + hparam['lambda'] * (1. - Y) * \
                 tf.square(tf.maximum(0., v_norm - hparam['m-']))
@@ -177,8 +180,7 @@ class CapsuleNet(object):
 
     def inspect(self, x):
         with tf.name_scope('Inpector'):
-            J = self.arch['num_class']
-            V = self.arch['Digit Capsule']['dim']
+            J, _, _, V = self._get_shape_JDUV()
             R = self.arch['valid']['spacing']
             m = self.arch['valid']['magnitude']
             h, w, c = self.arch['hwc']
@@ -250,7 +252,8 @@ class CapsuleNet(object):
 class CapsuleMultiMNIST(CapsuleNet):
     def loss(self, x, y):
         v = self._C(x)  # [n, J=10, V=16]
-
+        tf.summary.image('V', tf.expand_dims(v, -1), 4)
+        
         xh_ = self._G(
             tf.concat([v, v], 0),
             tf.concat([y[:, 0], y[:, 1]], 0)
@@ -258,18 +261,17 @@ class CapsuleMultiMNIST(CapsuleNet):
 
         with tf.name_scope('Loss'):
             xh0, xh1 = tf.split(xh_, 2)
-
             xh_ = tf.concat([xh0, xh1, - tf.ones_like(xh0)], -1)
-            tf.summary.image('xhx', xh_, 4)
-            tf.summary.image('xh0', xh0, 4)
-            tf.summary.image('xh1', xh1, 4)
-
+            with tf.name_scope('Images'):
+                tf.summary.image('x', x, 4)
+                tf.summary.image('xhx', xh_, 4)
+                tf.summary.image('xh0', xh0, 4)
+                tf.summary.image('xh1', xh1, 4)
+                
             xh = tf.concat([tf.expand_dims(xh0, -1), tf.expand_dims(xh1, -1)], -1)
             xh = tf.reduce_max(xh, -1)
 
-            tf.summary.image('x', x, 4)
             # tf.summary.image('xh', xh, 4)
-            tf.summary.image('V', tf.expand_dims(v, -1), 4)
 
             hparam = self.arch['loss']
 
@@ -313,7 +315,7 @@ class CapsuleMultiMNIST(CapsuleNet):
         dirs.update({'logdir': dirs['logdir'] + args.msg})
 
         hparam = self.arch['training']
-        maxIter = hparam['num_epoch'] * 60000 // hparam['batch_size']
+        maxIter = hparam['num_epoch'] * 60000000 // hparam['batch_size']  # TODO
         optimizer = tf.train.AdamOptimizer()
         opt = optimizer.minimize(loss['L'], global_step=global_step)
 
@@ -350,7 +352,7 @@ def main():
     with open(args.arch) as fp:
         arch = json.load(fp)
     data = MultiMNIST(
-        './MultiMNIST_test.tfr',
+        './MultiMNIST_test.tfr',  # TODO
         batch_size=arch['training']['batch_size'],
         data_format='channels_last',
         capacity=2**14, min_after_dequeue=2**13
