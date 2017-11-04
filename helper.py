@@ -13,6 +13,12 @@ def nchw_to_nhwc(x):
 def nhwc_to_nchw(x):
     return tf.transpose(x, [0, 3, 1, 2])
 
+def hwc_to_chw(x):
+    return tf.transpose(x, [2, 0, 1])
+
+def chw_to_hwc(x):
+    return tf.transpose(x, [1, 2, 0])
+
 class mnist(object):
     ''' MNIST batcher
     *padded as 32x32 image 
@@ -52,7 +58,7 @@ class mnist(object):
                     capacity=capacity,
                     min_after_dequeue=min_after_dequeue,
                     enqueue_many=True,
-                    num_threads=4,
+                    num_threads=num_threads,
                 )
                 self.x_t, self.y_t = tf.train.batch(
                     [x_t, y_t],
@@ -60,9 +66,65 @@ class mnist(object):
                     capacity=capacity,
                     # min_after_dequeue=min_after_dequeue,
                     enqueue_many=True,
-                    num_threads=4,
+                    num_threads=num_threads,
                 )
 
+
+class MultiMNIST(object):
+    ''' MNIST batcher
+    *padded as 32x32 image 
+    '''
+    def __init__(self,
+        dataset='./MultiMNIST.tfr',
+        batch_size=256,
+        batch_size_t=100, 
+        data_format='channels_first',
+        capacity=2048,
+        min_after_dequeue=1536,
+        # shift=None,  # TODO
+        # dimension=28,
+        num_threads=4,
+        ):
+        '''
+        Return:
+            36x36 image
+        '''
+        with tf.device('cpu'):
+            with tf.name_scope('MNISTInputPipeline'):
+                filename_queue = tf.gfile.Glob(dataset)
+                filename_queue = tf.train.string_input_producer(filename_queue)
+
+                reader = tf.TFRecordReader()
+                _, data = reader.read(filename_queue)
+
+                features = {
+                    'image': tf.FixedLenFeature([], dtype=tf.string),
+                    'label': tf.FixedLenFeature([2], dtype=tf.int64),
+                }
+                data = tf.parse_single_example(data, features)
+
+                x = tf.image.decode_png(data['image'])
+                y = data['label']
+
+                if data_format == 'channels_first':
+                    x = hwc_to_chw(x)
+
+                self.x, self.y = tf.train.shuffle_batch(
+                    [x, y],
+                    batch_size=batch_size,
+                    capacity=capacity,
+                    min_after_dequeue=min_after_dequeue,
+                    # enqueue_many=True,
+                    num_threads=num_threads,
+                )
+                # self.x_t, self.y_t = tf.train.batch(
+                #     [x_t, y_t],
+                #     batch_size=batch_size_t,
+                #     capacity=capacity,
+                #     # min_after_dequeue=min_after_dequeue,
+                #     enqueue_many=True,
+                #     num_threads=4,
+                # )
 
 def validate_log_dirs(args):
     ''' Create a default log dir (if necessary) '''
