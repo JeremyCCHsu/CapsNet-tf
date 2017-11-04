@@ -247,6 +247,73 @@ class CapsuleNet(object):
 #     # CapNet.train()
 #     # set_trace()
 
+class CapsuleMultiMNIST(CapsuleNet):
+    # def _generate(self, v, y):
+    #     ''' y: [n, 2] '''
+    #     J = self.arch['num_class']
+    #     V = self.arch['Digit Capsule']['dim']
+
+    #     Y = tf.one_hot(y, J) # [n, J]
+    #     Y = tf.expand_dims(Y, -1)  # [n, J, 1]
+
+    #     x = v * Y
+    #     x = tf.reshape(x, [-1, J * V])
+
+    #     net = self.arch['generator']
+    #     for o in net['output']:
+    #         x = tf.layers.dense(x, o, tf.nn.relu)
+
+    #     h, w, c = self.arch['hwc']
+    #     x = tf.layers.dense(x, h * w * c, tf.nn.tanh)
+    #     return tf.reshape(x, [-1, h, w, c])
+
+    def loss(self, x, y):
+        v = self._C(x)  # [n, J=10, V=16]
+
+        xh0 = self._G(v, y[:, 0])  # [n, h, w, c]
+        xh1 = self._G(v, y[:, 1])  # [n, h, w, c]
+        xh_ = tf.concat([xh0, xh1, tf.zeros_like(xh0)], -1)
+        tf.summary.image('xh', xh_, 4)
+
+        xh = tf.concat([tf.expand_dims(xh0, -1), tf.expand_dims(xh1, -1)], -1)
+        xh = tf.reduce_max(xh, -1)
+
+        with tf.name_scope('Loss'):
+            tf.summary.image('x', x, 4)
+            # tf.summary.image('xh', xh, 4)
+            tf.summary.image('V', tf.expand_dims(v, -1), 4)
+
+            hparam = self.arch['loss']
+
+            l_reconst = hparam['reconst weight'] * \
+                tf.reduce_mean(tf.reduce_sum(tf.square(x - xh), [1, 2, 3]))
+            tf.summary.scalar('l_reconst', l_reconst)
+
+            v_norm = tf.norm(v, axis=-1)  # [n, J=10]
+            tf.summary.histogram('v_norm', v_norm)
+
+            Y0 = tf.one_hot(y[:, 0], tf.shape(v)[1])
+            Y1 = tf.one_hot(y[:, 1], tf.shape(v)[1])
+            Y = Y0 + Y1
+
+            # Y = tf.one_hot(y, tf.shape(v)[1])  # [n, J=10]
+            
+            loss = Y * tf.square(tf.maximum(0., hparam['m+'] - v_norm)) \
+                + hparam['lambda'] * (1. - Y) * \
+                tf.square(tf.maximum(0., v_norm - hparam['m-']))
+            loss = tf.reduce_mean(tf.reduce_sum(loss, -1))
+
+            tf.summary.scalar('loss', loss)
+            loss += l_reconst
+
+            acc = tf.reduce_mean(
+                tf.cast(
+                    tf.equal(y, tf.argmax(v_norm, 1)),
+                    tf.float32
+                ))
+            return {'L': loss, 'acc': acc, 'reconst': l_reconst}
+
+
 def main():
     with open(args.arch) as fp:
         arch = json.load(fp)

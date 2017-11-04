@@ -35,149 +35,88 @@ def random_crop(img, shape=36):
     return img[i: i + shape, j: j + shape, :]
 
 
+class MultiMNISTBuilder(object):
+    def __init__(self, n_proliferation=1000, num_class=10, shape=[36, 36, 1]):
+        self.num_class = num_class
+        self.n_per_class, self.remainder = divmod(
+            n_proliferation, num_class - 1)
 
-h, w, c = 36, 36, 1
+        # a simple TF graph here
+        self.np_img = tf.placeholder(tf.uint8, shape=shape)
+        self.png_img = tf.image.encode_png(self.np_img)
+        
+        self.sess = None
+        self.tfr_writer = None
 
-N_OUTPUT = 60000000
-K = 10  # num of classes
-N = 1000  # num of proliferation per image 
+    
+    def build(self, oFilename, target='training'):
+        ''' build training or testing set '''
+        if target == 'training':
+            x, _ = self._load_mnist()
+            N_OUTPUT = 60000000
+        elif target == 'testing':
+            _, x = self._load_mnist()
+            N_OUTPUT = 10000000
+        else:
+            raise ValueError('Only `training` and `testing` are supported.')
 
-# a simple TF graph here
-np_img = tf.placeholder(tf.uint8, shape=[h, w, c])
-png_img = tf.image.encode_png(np_img)
+        c = 1
+        self.sess = tf.Session()
+        tfr_writer = tf.python_io.TFRecordWriter(oFilename)
+        for i in range(10):
+            x_digit_i = x[i]
+            other_class = set(range(10)) - set([i])
+            for xi in x_digit_i:
+                xi = random_crop(pad_to44(xi)) 
+                for j in other_class:
+                    Nj = x[j].shape[0]
 
+                    index = np.random.choice(range(Nj), self.n_per_class, replace=False)
+                    imgs_from_that_class = x[j][index]
 
-def pad_crop_merge_save(base_pack, additional_pack, tfpack):
-    xi, i = base_pack
-    xo, o = additional_pack
-    xo = random_crop(pad_to44(xo))
-    combined_img = np.concatenate([xi, xo], -1)
-    combined_img = np.max(combined_img, -1, keepdims=True)
+                    for xo in imgs_from_that_class:
+                        self._pad_crop_merge_save((xi, i), (xo, j), tfr_writer)
+                        print('\rProcessing {:08d}/{:08d}...'.format(c, N_OUTPUT), end='')
+                        c += 1
 
-    png_encoded = tfpack['sess'].run(
-        tfpack['png_img'], feed_dict={tfpack['np_img']: combined_img})
+                for _ in range(self.remainder):
+                    j = np.random.choice(list(other_class))
+                    Nj = x[j].shape[0]
+                    index = np.random.choice(range(Nj))
+                    xo = x[j][index]
 
-    ex = make_tf_example(png_encoded, [i, j])
-    tfpack['writer'].write(ex.SerializeToString())
-
-
-def main():
-    (x, y), (x_t, y_t) = tf.keras.datasets.mnist.load_data()
-
-    if len(x.shape) == 3:
-        x = np.expand_dims(x, -1)
-        x_t = np.expand_dims(x_t, -1)
-
-    x = [x[y==i] for i in range(10)]
-    x_t = [x_t[y_t==i] for i in range(10)]
-
-    sess = tf.Session()
-    tfr_writer = tf.python_io.TFRecordWriter('MultiMNIST.tfr')
-
-    n_per_class, remainder = divmod(N, K - 1)
-    count = 1
-    for i in range(10):
-        x_digit_i = x[i]
-        other_class = set(range(10)) - set([i])
-        for xi in x_digit_i:
-            xi = random_crop(pad_to44(xi)) 
-            for j in other_class:
-                Nj = x[j].shape[0]
-
-                index = np.random.choice(range(Nj), n_per_class, replace=False)
-                imgs_from_that_class = x[j][index]
-                
-                for xo in imgs_from_that_class:
-                    # pad_crop_merge_save(
-                    #     base_pack=(xi, i),
-                    #     additional_pack=(xo, o),
-                    #     tfpack={'sess': sess, np_p}
-                    # )
-
-                    xo = random_crop(pad_to44(xo))
-                    combined_img = np.concatenate([xi, xo], -1)
-                    combined_img = np.max(combined_img, -1, keepdims=True)
-
-                    png_encoded = sess.run(png_img, feed_dict={np_img: combined_img})
-
-                    ex = make_tf_example(png_encoded, [i, j])
-                    tfr_writer.write(ex.SerializeToString())
-
+                    self._pad_crop_merge_save((xi, i), (xo, j), tfr_writer)
                     print('\rProcessing {:08d}/{:08d}...'.format(c, N_OUTPUT), end='')
                     c += 1
+        print()
+        self.sess.close()
+        tfr_writer.close()
 
+    def _load_mnist(self):
+        (x, y), (x_t, y_t) = tf.keras.datasets.mnist.load_data()
 
-            for _ in range(remainder):
-                j = np.random.choice(list(other_class))
-                Nj = x[j].shape[0]
-                index = np.random.choice(range(Nj))
-                xo = x[j][index]
+        if len(x.shape) == 3:
+            x = np.expand_dims(x, -1)
+            x_t = np.expand_dims(x_t, -1)
 
-                xo = random_crop(pad_to44(xo))
-                combined_img = np.concatenate([xi, xo], -1)
-                combined_img = np.max(combined_img, -1, keepdims=True)
-                png_encoded = sess.run(png_img, feed_dict={np_img: combined_img})
+        x = [x[y==i] for i in range(self.num_class)]
+        x_t = [x_t[y_t==i] for i in range(self.num_class)]
+        return x, x_t
 
-                ex = make_tf_example(png_encoded, [i, j])
-                tfr_writer.write(ex.SerializeToString())
+    def _pad_crop_merge_save(self, xi_i, xo_j, writer):
+        xi, i = xi_i
+        xo, j = xo_j
+        xo = random_crop(pad_to44(xo))
+        combined_img = np.concatenate([xi, xo], -1)
+        combined_img = np.max(combined_img, -1, keepdims=True)
 
-                print('\rProcessing {:08d}/{:08d}...'.format(c, N_OUTPUT), end='')
-                c += 1
-                    # with open('./dataset/MultiMNIST/img{}{}-{:08d}.png'.format(i, j, c), 'wb') as fp:
-                    #     fp.write(png_encoded)
-    print()
-    tfr_writer.close()
-    sess.close()
+        png_encoded = self.sess.run(
+            self.png_img, feed_dict={self.np_img: combined_img})
 
-# encoded_png = tf.image.encode_png(x[0][0])
+        ex = make_tf_example(png_encoded, [i, j])
+        writer.write(ex.SerializeToString())
 
-
-# tf.train.Example
-#     tf.train.Features
-
-
-# def _int64_feature(value):
-#   return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
-
-
-# def _bytes_feature(value):
-#   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
-
-
-
-
-
-
-# # =====================
-# import tensorflow as tf
-# import numpy as np
-
-# img = np.random.normal(size=[28, 28, 1])
-# label0, label1 = 0, 1
-
-# # encoded_png = tf.image.encode_png(img)
-# example = tf.train.Example(
-#     features=tf.train.Features(
-#         feature={
-#             'label0': _int64_feature(label0),
-#             'label1': _int64_feature(label1),
-#             # 'shape': _bytes_feature(shape),
-#             'image': _bytes_feature(img.tostring())
-#         }
-#     )
-# )
-
-# # feature_lists=tf.train.FeatureLists(
-# #     feature_list={
-# #         'label': tf.train.Feature(
-# #             int64_list=tf.train.Int64List(value=[0, 1])
-# #         )
-# #     }
-# # )
-
-# # tf.train.FeatureList()
-
-# writer.write(example.SerializeToString())
-# with tf.python_io.TFRecordWriter('./test') as writer:
-#     writer.write()
-
+if __name__ == '__main__':
+    builder = MultiMNISTBuilder()
+    builder.build('./MultiMNIST_train.tfr', 'training')
+    builder.build('./MultiMNIST_test.tfr', 'testing')  # about 2 hr
