@@ -250,9 +250,15 @@ class CapsuleNet(object):
 #     # set_trace()
 
 class CapsuleMultiMNIST(CapsuleNet):
+    def _pick(self, v, y):
+        ''' v: [b, J, V]
+        `y`: [b,]
+        '''
+        i = tf.expand_dims(tf.range(tf.shape(v)[0]), -1)
+        y = tf.expand_dims(tf.cast(y, tf.int32), -1)
+        return tf.gather_nd(v, tf.concat([i, y], -1))
+
     def loss(self, x, y, xi, xj):
-
-
         v = self._C(x)  # [n, J=10, V=16]
         tf.summary.image('V', tf.expand_dims(v, -1), 4)
 
@@ -263,37 +269,53 @@ class CapsuleMultiMNIST(CapsuleNet):
 
         with tf.name_scope('Loss'):
             xhi, xhj = tf.split(xh_, 2)
-            xh_ = tf.concat([xhi, xhj, - tf.ones_like(xhi)], -1)
+            xhx = tf.concat([xhi, xhj, - tf.ones_like(xhi)], -1)  # pad by -1 (float) = 0 (uint8)
             with tf.name_scope('Images'):
                 tf.summary.image('x', x, 4)
-                tf.summary.image('xhx', xh_, 4)
+                tf.summary.image('xhx', xhx, 4)
                 tf.summary.image('xhi', xhi, 4)
                 tf.summary.image('xhj', xhj, 4)
+                tf.summary.image('xi', xi, 4)
+                tf.summary.image('xj', xj, 4)
 
-            xh = tf.concat([tf.expand_dims(xhi, -1), tf.expand_dims(xhj, -1)], -1)
-            xh = tf.reduce_max(xh, -1)
+            # xh = tf.concat([tf.expand_dims(xhi, -1), tf.expand_dims(xhj, -1)], -1)
+            # xh = tf.reduce_max(xh, -1)
 
             hparam = self.arch['loss']
+            r = hparam['reconst weight']
 
-            l_reconst = .5 * hparam['reconst weight'] * (
-                tf.reduce_mean(tf.reduce_sum(tf.square(xi - xhi), [1, 2, 3])) + \
-                tf.reduce_mean(tf.reduce_sum(tf.square(xj - xhj), [1, 2, 3]))
-            )
+            # l_reconst = .5 * hparam['reconst weight'] * tf.reduce_mean(
+            #     tf.reduce_sum(tf.square(xi - xhi) + tf.square(xj - xhj), [1, 2, 3]) #+
+            #     # tf.reduce_sum(tf.square(xj - xhj), [1, 2, 3])
+            # )
+            x_ = tf.concat([xi, xj], 0)
+            l_reconst = r * tf.reduce_mean(tf.reduce_sum(tf.square(xh_ - x_), [1, 2, 3]))
             tf.summary.scalar('l_reconst', l_reconst)
 
             v_norm = tf.norm(v, axis=-1)  # [n, J=10]
             tf.summary.histogram('v_norm', v_norm)
 
             J, _, _, _ = self._get_shape_JDUV()
-            Y = tf.one_hot(y[:, 0], J) + tf.one_hot(y[:, 1], J)  # [n, J]
+            Yi = tf.one_hot(y[:, 0], J)
+            Yj = tf.one_hot(y[:, 1], J)  # [n, J]
+            Y = Yi + Yj
 
-            loss = Y * tf.square(tf.maximum(0., hparam['m+'] - v_norm)) \
-                + hparam['lambda'] * (1. - Y) * \
-                tf.square(tf.maximum(0., v_norm - hparam['m-']))
+            # tf.summary.histogram('v_norm_ans', v_norm * Y)
+            # tf.summary.histogram('v_norm_not', v_norm * (1. - Y))
+            tf.summary.histogram('v_norm_i', self._pick(v_norm, y[:, 0]))
+            tf.summary.histogram('v_norm_j', self._pick(v_norm, y[:, 1]))
+
+            l, m, M = hparam['lambda'], hparam['m-'], hparam['m+']
+            loss = Y * tf.square(tf.maximum(0., M - v_norm)) \
+                + l * (1. - Y) * tf.square(tf.maximum(0., v_norm - m))
             loss = tf.reduce_mean(tf.reduce_sum(loss, -1))
             tf.summary.scalar('loss', loss)
 
-            loss += l_reconst
+            loss = loss + l_reconst
+
+            # loss = Y * tf.square(tf.maximum(0., hparam['m+'] - v_norm)) \
+            #     + hparam['lambda'] * (1. - Y) * \
+            #     tf.square(tf.maximum(0., v_norm - hparam['m-']))
 
             # acc = tf.reduce_mean(
             #     tf.cast(
@@ -362,7 +384,7 @@ def main():
     )
     net = CapsuleMultiMNIST(arch=arch)
     loss = net.loss(data.x, data.y, data.xi, data.xj)
-    # net.inspect(data.example)
+    net.inspect(data.example)
     # loss_t = net.loss(data.x_t, data.y_t)
     net.train(loss, loss_t=None)
 

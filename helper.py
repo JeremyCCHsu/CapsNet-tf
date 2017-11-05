@@ -71,7 +71,7 @@ class mnist(object):
 
 
 class MultiMNISTIndexReader(object):
-    def __init__(self, 
+    def __init__(self,
         train_index='MultiMNIST_index_train.npf',  # TODO
         batch_size=32,
         batch_size_t=100, 

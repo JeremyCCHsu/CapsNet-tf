@@ -21,7 +21,7 @@
         "m+": 0.9,
         "m-": 0.1,
         "lambda": 0.5,
-        "reconst weight": 1e-4
+        "reconst weight": 1e-5
     },
     "valid": {
         "magnitude": 0.25,
