@@ -80,7 +80,7 @@ class CapsuleNet(object):
         primary = tf.reshape(primary, [-1, I, U])
 
         u = primary  # NOTE: iteratively process the previous capsule `u`
-        B = tf.zeros([tf.shape(x)[0], I, J])  # the "attention" matrix        
+        B = tf.zeros([tf.shape(x)[0], I, J])  # the "attention" matrix
         for _ in range(self.arch['Digit Capsule']['nRouting']):
             v, B = self._stack(u, B)
 
@@ -152,7 +152,7 @@ class CapsuleNet(object):
             tf.summary.image('x', x, 4)
             tf.summary.image('xh', xh, 4)
             tf.summary.image('V', tf.expand_dims(v, -1), 4)
-            
+
             hparam = self.arch['loss']
 
             l_reconst = hparam['reconst weight'] * \
@@ -185,7 +185,7 @@ class CapsuleNet(object):
             m = self.arch['valid']['magnitude']
             h, w, c = self.arch['hwc']
 
-            v = self._C(x)  # 10, J=10, V=16, generated from exemplar images            
+            v = self._C(x)  # 10, J=10, V=16, generated from exemplar images
             v_eps, y_eps = make_linear_perturbation(J, V, R, m)
             for i in range(10):
                 vi = tf.expand_dims(v[i], 0)  # [1, J=10, V=16]
@@ -251,11 +251,11 @@ class CapsuleNet(object):
 
 class CapsuleMultiMNIST(CapsuleNet):
     def loss(self, x, y, xi, xj):
-        J, _, _, _ = self._get_shape_JDUV()
+
 
         v = self._C(x)  # [n, J=10, V=16]
         tf.summary.image('V', tf.expand_dims(v, -1), 4)
-        
+
         xh_ = self._G(
             tf.concat([v, v], 0),
             tf.concat([y[:, 0], y[:, 1]], 0)
@@ -269,15 +269,13 @@ class CapsuleMultiMNIST(CapsuleNet):
                 tf.summary.image('xhx', xh_, 4)
                 tf.summary.image('xhi', xhi, 4)
                 tf.summary.image('xhj', xhj, 4)
-                
+
             xh = tf.concat([tf.expand_dims(xhi, -1), tf.expand_dims(xhj, -1)], -1)
             xh = tf.reduce_max(xh, -1)
 
-            # tf.summary.image('xh', xh, 4)
-
             hparam = self.arch['loss']
 
-            l_reconst = hparam['reconst weight'] * (
+            l_reconst = .5 * hparam['reconst weight'] * (
                 tf.reduce_mean(tf.reduce_sum(tf.square(xi - xhi), [1, 2, 3])) + \
                 tf.reduce_mean(tf.reduce_sum(tf.square(xj - xhj), [1, 2, 3]))
             )
@@ -286,19 +284,15 @@ class CapsuleMultiMNIST(CapsuleNet):
             v_norm = tf.norm(v, axis=-1)  # [n, J=10]
             tf.summary.histogram('v_norm', v_norm)
 
-            # Y0 = tf.one_hot(y[:, 0], J)
-            # Y1 = tf.one_hot(y[:, 1], J)
-            # Y = Y0 + Y1
-            Y = tf.one_hot(y[:, 0], J) + tf.one_hot(y[:, 1], J)
+            J, _, _, _ = self._get_shape_JDUV()
+            Y = tf.one_hot(y[:, 0], J) + tf.one_hot(y[:, 1], J)  # [n, J]
 
-            # Y = tf.one_hot(y, tf.shape(v)[1])  # [n, J=10]
-            
             loss = Y * tf.square(tf.maximum(0., hparam['m+'] - v_norm)) \
                 + hparam['lambda'] * (1. - Y) * \
                 tf.square(tf.maximum(0., v_norm - hparam['m-']))
             loss = tf.reduce_mean(tf.reduce_sum(loss, -1))
-
             tf.summary.scalar('loss', loss)
+
             loss += l_reconst
 
             # acc = tf.reduce_mean(
@@ -308,12 +302,15 @@ class CapsuleMultiMNIST(CapsuleNet):
             #     ))
 
             # TODO: HOW TO CALCULATE THE "ACCURACY" in MultiMNIST?
+            # acc = tf.cast(tf.nn.in_top_k(v_norm, y[:, 0], 2), tf.float32) \
+            #     + tf.cast(tf.nn.in_top_k(v_norm, y[:, 1], 2), tf.float32)
+            # acc = tf.reduce_mean(acc) / 2.
             acc = tf.cast(tf.nn.in_top_k(v_norm, y[:, 0], 2), tf.float32) \
-                + tf.cast(tf.nn.in_top_k(v_norm, y[:, 1], 2), tf.float32)
-            acc = tf.reduce_mean(acc) / 2.
+                * tf.cast(tf.nn.in_top_k(v_norm, y[:, 1], 2), tf.float32)
+            acc = tf.reduce_mean(acc)
             return {'L': loss, 'acc': acc, 'reconst': l_reconst}
-    
-    
+
+
 
     def train(self, loss, loss_t):
         global_step = tf.Variable(0, name='global_step')
