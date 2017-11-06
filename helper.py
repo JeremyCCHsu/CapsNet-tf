@@ -109,10 +109,10 @@ class MultiMNISTIndexReader(object):
 
                 x_i = tf.image.resize_image_with_crop_or_pad(x_i, 44, 44)
                 x_i = tf.random_crop(x_i, size=[36, 36, 1])
-                x_i = char2tanh(x_i)                
+                x_i = char2tanh(x_i)
 
                 x_j = tf.image.resize_image_with_crop_or_pad(x_j, 44, 44)
-                x_j = tf.random_crop(x_j, size=[36, 36, 1])
+                x_j = tf.random_crop(x_j, size=[36, 36, 1], seed=9527)  # TODO
                 x_j = char2tanh(x_j)
 
                 x_merge = tf.concat(

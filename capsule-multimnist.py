@@ -267,6 +267,19 @@ class CapsuleMultiMNIST(CapsuleNet):
             tf.concat([y[:, 0], y[:, 1]], 0)
         )
 
+        # TODO: an exp on rescaling the DigitCaps
+        with tf.name_scope('Experiment'):
+            v_norm = tf.norm(v + 1e-6, axis=-1, keep_dims=True)
+            v_ = v / v_norm
+            xh_exp = self._G(
+                tf.concat([v_, v_], 0),
+                tf.concat([y[:, 0], y[:, 1]], 0)
+            )
+            xhie, xhje = tf.split(xh_exp, 2)
+            tf.summary.image('xei', xhie, 4)
+            tf.summary.image('xej', xhje, 4)
+        
+
         with tf.name_scope('Loss'):
             xhi, xhj = tf.split(xh_, 2)
             xhx = tf.concat([xhi, xhj, - tf.ones_like(xhi)], -1)  # pad by -1 (float) = 0 (uint8)
@@ -288,6 +301,8 @@ class CapsuleMultiMNIST(CapsuleNet):
             #     tf.reduce_sum(tf.square(xi - xhi) + tf.square(xj - xhj), [1, 2, 3]) #+
             #     # tf.reduce_sum(tf.square(xj - xhj), [1, 2, 3])
             # )
+
+            # TODO: Should I treat it individually? (the other digit as noise?)
             x_ = tf.concat([xi, xj], 0)
             l_reconst = r * tf.reduce_mean(tf.reduce_sum(tf.square(xh_ - x_), [1, 2, 3]))
             tf.summary.scalar('l_reconst', l_reconst)
@@ -304,6 +319,13 @@ class CapsuleMultiMNIST(CapsuleNet):
             # tf.summary.histogram('v_norm_not', v_norm * (1. - Y))
             tf.summary.histogram('v_norm_i', self._pick(v_norm, y[:, 0]))
             tf.summary.histogram('v_norm_j', self._pick(v_norm, y[:, 1]))
+            tf.summary.histogram(
+                'v_norm_ans', 
+                tf.concat(
+                    [self._pick(v_norm, y[:, 0]), self._pick(v_norm, y[:, 1])],
+                    0
+                )
+            )
 
             l, m, M = hparam['lambda'], hparam['m-'], hparam['m+']
             loss = Y * tf.square(tf.maximum(0., M - v_norm)) \
@@ -324,12 +346,14 @@ class CapsuleMultiMNIST(CapsuleNet):
             #     ))
 
             # TODO: HOW TO CALCULATE THE "ACCURACY" in MultiMNIST?
-            # acc = tf.cast(tf.nn.in_top_k(v_norm, y[:, 0], 2), tf.float32) \
-            #     + tf.cast(tf.nn.in_top_k(v_norm, y[:, 1], 2), tf.float32)
-            # acc = tf.reduce_mean(acc) / 2.
+            acc = tf.cast(tf.nn.in_top_k(v_norm, y[:, 0], 2), tf.float32) \
+                + tf.cast(tf.nn.in_top_k(v_norm, y[:, 1], 2), tf.float32)
+            acc = tf.reduce_mean(acc) / 2.
+            tf.summary.scalar('UR', acc)
             acc = tf.cast(tf.nn.in_top_k(v_norm, y[:, 0], 2), tf.float32) \
                 * tf.cast(tf.nn.in_top_k(v_norm, y[:, 1], 2), tf.float32)
             acc = tf.reduce_mean(acc)
+            tf.summary.scalar('EM', acc)
             return {'L': loss, 'acc': acc, 'reconst': l_reconst}
 
 
@@ -341,7 +365,10 @@ class CapsuleMultiMNIST(CapsuleNet):
 
         hparam = self.arch['training']
         maxIter = hparam['num_epoch'] * 60000000 // hparam['batch_size']  # TODO
-        optimizer = tf.train.AdamOptimizer()
+        learning_rate = tf.train.exponential_decay(
+            1e-3, global_step,
+            5000, 0.8, staircase=True)
+        optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
         opt = optimizer.minimize(loss['L'], global_step=global_step)
 
         sv = tf.train.Supervisor(
