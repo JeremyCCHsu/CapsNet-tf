@@ -20,7 +20,7 @@ tf.app.flags.DEFINE_string('msg', '-Capsule', 'Additional message')
 def main():
     with open(args.arch) as fp:
         arch = json.load(fp)
-    data = mnist(
+    data = MNIST(
         batch_size=arch['training']['batch_size'],
         data_format='channels_last'
     )

@@ -29,7 +29,7 @@
     },
     "training": {
         "batch_size": 200,
-        "num_epoch": 100,
+        "num_epoch": 750,
         "update_freq": 500
     },
     "Note": "recognizer's last output must be divisible by the dim*depth of the primay capsule."
