@@ -179,7 +179,7 @@ class CapsuleNet(object):
             5000, 0.8, staircase=True)
         optimizer = tf.train.AdamOptimizer(learning_rate)
         opt = optimizer.minimize(loss['L'], global_step=global_step)
-        tf.summary.scalar(learning_rate)
+        tf.summary.scalar('lr', learning_rate)
 
         sv = tf.train.Supervisor(
             logdir=self.arch['logdir'],
@@ -371,7 +371,7 @@ class CapsuleMultiMNIST(CapsuleNet):
             5000, 0.8, staircase=True)
         optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
         opt = optimizer.minimize(loss['L'], global_step=global_step)
-        tf.summary.scalar(learning_rate)
+        tf.summary.scalar('lr', learning_rate)
 
         sv = tf.train.Supervisor(
             logdir=self.arch['logdir'],
