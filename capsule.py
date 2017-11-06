@@ -3,46 +3,17 @@ import json
 import numpy as np
 import tensorflow as tf
 
-from helper import  mnist, validate_log_dirs
+from helper import *
 
-args = tf.app.flags.FLAGS
-tf.app.flags.DEFINE_string(
-    'arch', 'architecture-capsule.json', 'network architecture')
-tf.app.flags.DEFINE_string(
-    'logdir_root', None, 'root of log dir')
-tf.app.flags.DEFINE_string('logdir', None, 'log dir')
-tf.app.flags.DEFINE_string(
-    'restore_from', None, 'restore from dir (not from *.ckpt)')
-tf.app.flags.DEFINE_string('msg', '-Capsule', 'Additional message')
-
-def squash(x):
-    '''
-    `x`: [n, J, V]
-    '''
-    with tf.name_scope('Squash'):
-        x2 = tf.square(x)
-        x_sn = tf.reduce_sum(x2, -1, keep_dims=True)  # [n, J], squared norm
-        v = x_sn / (1. + x_sn) * x / tf.sqrt(x_sn)
-        return v
-
-
-def make_linear_perturbation(J, V, R, m=.25):
-    '''
-    R = 21 is `int`
-    J = 10
-    V = 16
-    '''
-    with tf.name_scope('MakeLinearInterpBasis'):
-        I = tf.expand_dims(tf.eye(V), -1)  # [V, V, 1]
-        a = m * (tf.range(0, R, dtype=tf.float32) / ((R - 1)/2) - 1)
-        I = I * a  # [V, V, 21]
-        I = tf.transpose(I, [2, 1, 0])  # [R, V, V]
-        I = tf.reshape(I, [-1, V])  # [V*21, V]
-        I = tf.expand_dims(I, 1)
-        I = tf.tile(I, [1, J, 1])  # [V*21, 10, V]
-        y = tf.ones([R * V,], tf.int32)
-        return I, y
-
+# args = tf.app.flags.FLAGS
+# tf.app.flags.DEFINE_string(
+#     'arch', 'architecture-capsule.json', 'network architecture')
+# tf.app.flags.DEFINE_string(
+#     'logdir_root', None, 'root of log dir')
+# tf.app.flags.DEFINE_string('logdir', None, 'log dir')
+# tf.app.flags.DEFINE_string(
+#     'restore_from', None, 'restore from dir (not from *.ckpt)')
+# tf.app.flags.DEFINE_string('msg', '-Capsule', 'Additional message')
 
 class CapsuleNet(object):
     def __init__(self, arch):
@@ -200,16 +171,18 @@ class CapsuleNet(object):
 
     def train(self, loss, loss_t):
         global_step = tf.Variable(0)
-        dirs = validate_log_dirs(args)
-        dirs.update({'logdir': dirs['logdir'] + args.msg})
 
         hparam = self.arch['training']
         maxIter = hparam['num_epoch'] * 60000 // hparam['batch_size']
-        optimizer = tf.train.AdamOptimizer()
+        learning_rate = tf.train.exponential_decay(
+            1e-3, global_step,
+            5000, 0.8, staircase=True)
+        optimizer = tf.train.AdamOptimizer(learning_rate)
         opt = optimizer.minimize(loss['L'], global_step=global_step)
+        tf.summary.scalar(learning_rate)
 
         sv = tf.train.Supervisor(
-            logdir=dirs['logdir'],
+            logdir=self.arch['logdir'],
             # save_summaries_secs=120,
             global_step=global_step,
         )
@@ -247,18 +220,183 @@ class CapsuleNet(object):
 #     # CapNet.train()
 #     # set_trace()
 
-def main():
-    with open(args.arch) as fp:
-        arch = json.load(fp)
-    data = mnist(
-        batch_size=arch['training']['batch_size'],
-        data_format='channels_last'
-    )
-    net = CapsuleNet(arch=arch)
-    loss = net.loss(data.x, data.y)
-    net.inspect(data.example)
-    loss_t = net.loss(data.x_t, data.y_t)
-    net.train(loss, loss_t)
+# def main():
+#     with open(args.arch) as fp:
+#         arch = json.load(fp)
+#     data = mnist(
+#         batch_size=arch['training']['batch_size'],
+#         data_format='channels_last'
+#     )
+#     net = CapsuleNet(arch=arch)
+#     loss = net.loss(data.x, data.y)
+#     net.inspect(data.example)
+#     loss_t = net.loss(data.x_t, data.y_t)
+#     net.train(loss, loss_t)
 
-if __name__ == '__main__':
-    main()
+# if __name__ == '__main__':
+#     main()
+
+
+class CapsuleMultiMNIST(CapsuleNet):
+    def _pick(self, v, y):
+        ''' v: [b, J, V]
+        `y`: [b,]
+        '''
+        i = tf.expand_dims(tf.range(tf.shape(v)[0]), -1)
+        y = tf.expand_dims(tf.cast(y, tf.int32), -1)
+        return tf.gather_nd(v, tf.concat([i, y], -1))
+
+    def loss(self, x, y, xi, xj):
+        v = self._C(x)  # [n, J=10, V=16]
+        tf.summary.image('V', tf.expand_dims(v, -1), 4)
+
+        xh_ = self._G(
+            tf.concat([v, v], 0),
+            tf.concat([y[:, 0], y[:, 1]], 0)
+        )
+
+        # TODO: an exp on rescaling the DigitCaps
+        with tf.name_scope('Experiment'):
+            v_norm = tf.norm(v + 1e-6, axis=-1, keep_dims=True)
+            v_ = v / v_norm
+            xh_exp = self._G(
+                tf.concat([v_, v_], 0),
+                tf.concat([y[:, 0], y[:, 1]], 0)
+            )
+            xhie, xhje = tf.split(xh_exp, 2)
+            tf.summary.image('xei', xhie, 4)
+            tf.summary.image('xej', xhje, 4)
+
+        with tf.name_scope('Loss'):
+            with tf.name_scope('Images'):
+                xhi, xhj = tf.split(xh_, 2)
+                # pad by -1 (float) = 0 (uint8)
+                xhx = tf.concat([xhi, xhj, - tf.ones_like(xhi)], -1)
+                tf.summary.image('x', x, 4)
+                tf.summary.image('xhx', xhx, 4)
+                tf.summary.image('xhi', xhi, 4)
+                tf.summary.image('xhj', xhj, 4)
+                tf.summary.image('xi', xi, 4)
+                tf.summary.image('xj', xj, 4)
+
+            # xh = tf.concat([tf.expand_dims(xhi, -1), tf.expand_dims(xhj, -1)], -1)
+            # xh = tf.reduce_max(xh, -1)
+
+            hparam = self.arch['loss']
+            r = hparam['reconst weight']
+
+            # l_reconst = .5 * hparam['reconst weight'] * tf.reduce_mean(
+            #     tf.reduce_sum(tf.square(xi - xhi) + tf.square(xj - xhj), [1, 2, 3]) #+
+            #     # tf.reduce_sum(tf.square(xj - xhj), [1, 2, 3])
+            # )
+
+            x_ = tf.concat([xi, xj], 0)
+            l_reconst = r * \
+                tf.reduce_mean(tf.reduce_sum(tf.square(xh_ - x_), [1, 2, 3]))
+            tf.summary.scalar('l_reconst', l_reconst)
+
+            v_norm = tf.norm(v, axis=-1)  # [n, J=10]
+            tf.summary.histogram('v_norm', v_norm)
+
+            J, _, _, _ = self._get_shape_JDUV()
+            Yi = tf.one_hot(y[:, 0], J)
+            Yj = tf.one_hot(y[:, 1], J)  # [n, J]
+            Y = Yi + Yj
+
+            # tf.summary.histogram('v_norm_ans', v_norm * Y)
+            # tf.summary.histogram('v_norm_not', v_norm * (1. - Y))
+            tf.summary.histogram('v_norm_i', self._pick(v_norm, y[:, 0]))
+            tf.summary.histogram('v_norm_j', self._pick(v_norm, y[:, 1]))
+            # tf.summary.histogram(
+            #     'v_norm_ans',
+            #     tf.concat(
+            #         [self._pick(v_norm, y[:, 0]), self._pick(v_norm, y[:, 1])],
+            #         0
+            #     )
+            # )
+
+            # TODO: Should I treat it individually? (the other digit as noise?)
+            l, m, M = hparam['lambda'], hparam['m-'], hparam['m+']
+
+            with tf.name_scope('Classification'):
+                # <sol 1> According to Sec. 3, this is it.
+                loss = Y * tf.square(tf.maximum(0., M - v_norm)) \
+                    + l * (1. - Y) * tf.square(tf.maximum(0., v_norm - m))
+                loss = tf.reduce_mean(tf.reduce_sum(loss, -1))
+
+                # # <sol 2>
+                # loss_i = Yi * tf.square(tf.maximum(0., M - v_norm)) \
+                #     + l * (1. - Yi) * tf.square(tf.maximum(0., v_norm - m))
+                # loss_j = Yj * tf.square(tf.maximum(0., M - v_norm)) \
+                #     + l * (1. - Yj) * tf.square(tf.maximum(0., v_norm - m))
+
+                # loss = tf.reduce_mean(tf.reduce_sum(loss_i + loss_j, -1))
+
+            tf.summary.scalar('loss', loss)
+
+            loss = loss + l_reconst
+
+            # NOTE: the convergence rate of MNIST is astonishingly fast
+            # (after 1K, the reconst is already pretty good)
+
+            # loss = Y * tf.square(tf.maximum(0., hparam['m+'] - v_norm)) \
+            #     + hparam['lambda'] * (1. - Y) * \
+            #     tf.square(tf.maximum(0., v_norm - hparam['m-']))
+
+            # acc = tf.reduce_mean(
+            #     tf.cast(
+            #         tf.equal(y, tf.argmax(v_norm, 1)),
+            #         tf.float32
+            #     ))
+
+            # TODO: HOW TO CALCULATE THE "ACCURACY" in MultiMNIST?
+            acc = tf.cast(tf.nn.in_top_k(v_norm, y[:, 0], 2), tf.float32) \
+                + tf.cast(tf.nn.in_top_k(v_norm, y[:, 1], 2), tf.float32)
+            acc = tf.reduce_mean(acc) / 2.
+            tf.summary.scalar('UR', acc)
+            acc = tf.cast(tf.nn.in_top_k(v_norm, y[:, 0], 2), tf.float32) \
+                * tf.cast(tf.nn.in_top_k(v_norm, y[:, 1], 2), tf.float32)
+            acc = tf.reduce_mean(acc)
+            tf.summary.scalar('EM', acc)
+            return {'L': loss, 'acc': acc, 'reconst': l_reconst}
+
+    def train(self, loss, loss_t):
+        global_step = tf.Variable(0, name='global_step')
+        
+        hparam = self.arch['training']
+        maxIter = hparam['num_epoch'] * \
+            60000000 // hparam['batch_size']  # TODO
+        learning_rate = tf.train.exponential_decay(
+            1e-3, global_step,
+            5000, 0.8, staircase=True)
+        optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+        opt = optimizer.minimize(loss['L'], global_step=global_step)
+        tf.summary.scalar(learning_rate)
+
+        sv = tf.train.Supervisor(
+            logdir=self.arch['logdir'],
+            # save_summaries_secs=120,
+            global_step=global_step,
+        )
+        sess_config = tf.ConfigProto(
+            allow_soft_placement=True,
+            gpu_options=tf.GPUOptions(allow_growth=True)
+        )
+        with sv.managed_session(config=sess_config) as sess:
+            for it in range(maxIter):
+                if it % hparam['update_freq'] == 0:
+                    # a = list()
+                    # for _ in range(100):
+                    #     a_ = sess.run(loss_t['acc'])
+                    #     a.append(a_)
+                    # a_t = np.mean(a)
+
+                    l, a, _ = sess.run([loss['L'], loss['acc'], opt])
+                    print(
+                        '\rIter {}/{}: loss = {:.4e}, acc={:.2f}%;'.format(
+                            it, maxIter, l, a * 100.),  # , a_t * 100.),
+                        end=''
+                    )
+                else:
+                    sess.run(opt)
+            print()

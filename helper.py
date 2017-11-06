@@ -19,6 +19,35 @@ def hwc_to_chw(x):
 def chw_to_hwc(x):
     return tf.transpose(x, [1, 2, 0])
 
+
+def squash(x):
+    '''
+    `x`: [n, J, V]
+    '''
+    with tf.name_scope('Squash'):
+        x2 = tf.square(x)
+        x_sn = tf.reduce_sum(x2, -1, keep_dims=True)  # [n, J], squared norm
+        v = x_sn / (1. + x_sn) * x / tf.sqrt(x_sn)
+        return v
+
+
+def make_linear_perturbation(J, V, R, m=.25):
+    '''
+    R = 21 is `int`
+    J = 10
+    V = 16
+    '''
+    with tf.name_scope('MakeLinearInterpBasis'):
+        I = tf.expand_dims(tf.eye(V), -1)  # [V, V, 1]
+        a = m * (tf.range(0, R, dtype=tf.float32) / ((R - 1) / 2) - 1)
+        I = I * a  # [V, V, 21]
+        I = tf.transpose(I, [2, 1, 0])  # [R, V, V]
+        I = tf.reshape(I, [-1, V])  # [V*21, V]
+        I = tf.expand_dims(I, 1)
+        I = tf.tile(I, [1, J, 1])  # [V*21, 10, V]
+        y = tf.ones([R * V, ], tf.int32)
+        return I, y
+
 class mnist(object):
     ''' MNIST batcher
     *padded as 32x32 image 
