@@ -15,6 +15,11 @@ Tensorflow 1.4
 Run `python capsule.py` and use `tensorboard --logdir [logdir/train/datetime-Capsule]` to see the results.
 
 
+To run the Multi-MNIST test, you need to first build the dataset by  
+`python build_multimnist`  
+and then run the experiment by  
+`python train_multimnist.py`  
+
 # Results 
 Their figure showing the result of dimension pertubation.  
 ![their results](img/fig4.png)  

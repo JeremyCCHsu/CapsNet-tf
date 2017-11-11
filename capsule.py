@@ -169,7 +169,7 @@ class CapsuleNet(object):
         maxIter = hparam['num_epoch'] * 60000 // hparam['batch_size']
         learning_rate = tf.train.exponential_decay(
             1e-3, global_step,
-            5000, 0.8, staircase=True)
+            hparam['decay_step'], 0.99, staircase=True)
         optimizer = tf.train.AdamOptimizer(learning_rate)
         opt = optimizer.minimize(loss['L'], global_step=global_step)
         tf.summary.scalar('lr', learning_rate)
@@ -260,19 +260,9 @@ class CapsuleMultiMNIST(CapsuleNet):
             Yj = tf.one_hot(y[:, 1], J)  # [n, J]
             Y = Yi + Yj
 
-            # tf.summary.histogram('v_norm_ans', v_norm * Y)
-            # tf.summary.histogram('v_norm_not', v_norm * (1. - Y))
             tf.summary.histogram('v_norm_i', self._pick(v_norm, y[:, 0]))
             tf.summary.histogram('v_norm_j', self._pick(v_norm, y[:, 1]))
-            # tf.summary.histogram(
-            #     'v_norm_ans',
-            #     tf.concat(
-            #         [self._pick(v_norm, y[:, 0]), self._pick(v_norm, y[:, 1])],
-            #         0
-            #     )
-            # )
 
-            # TODO: Should I treat it individually? (the other digit as noise?)
             l, m, M = hparam['lambda'], hparam['m-'], hparam['m+']
 
             with tf.name_scope('Classification'):
@@ -306,7 +296,7 @@ class CapsuleMultiMNIST(CapsuleNet):
             60000000 // hparam['batch_size']  # TODO
         learning_rate = tf.train.exponential_decay(
             1e-3, global_step,
-            5000, 0.8, staircase=True)
+            hparam['decay_step'], 0.99, staircase=True)
         optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
         opt = optimizer.minimize(loss['L'], global_step=global_step)
         tf.summary.scalar('lr', learning_rate)
